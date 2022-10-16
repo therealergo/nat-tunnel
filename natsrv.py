@@ -28,12 +28,12 @@ def _format_addr(addr):
 def _timestamp():
 	return _b(time.strftime('[%Y-%m-%d %H:%M:%S] ', time.localtime(time.time())), 'utf-8')
 
-def recvall(socket, n_bytes):
+def recvall(conn, n_bytes):
 	if n_bytes == 0:
 		return b''
 	data = b''
 	while True:
-		data_rx = socket.recv(n_bytes)
+		data_rx = conn.recv(n_bytes)
 		if len(data_rx) == 0:
 			raise socket.timeout()
 		data += data_rx
