@@ -96,7 +96,29 @@ class NATClient():
 					elif command_c == b'D':
 						conn = self.idx_to_conn_list[command_a]
 						conn.sendall(command_d)
-				
+
+					# Ping received, send response
+					elif command_c == b'P':
+						self.control_socket.sendall(b'R')
+						self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
+						self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
+
+					# Ping response received
+					elif command_c == b'R':
+						pass
+
+					# Something else is wrong
+					else:
+						print("Control socket failed!")
+						self.control_socket.close()
+						self.control_socket = None
+						for conn in self.local_conn_list:
+							conn.close()
+						self.local_conn_list = []
+						self.idx_to_conn_list = {}
+						self.conn_to_idx_list = {}
+						continue
+
 				# Data from local connection
 				for local_conn in a:
 					data = local_conn.recv(1024)
@@ -106,10 +128,10 @@ class NATClient():
 						self.control_socket.sendall(b'X')
 						self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4, byteorder="big"))
 						self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-						self.remote_conn_list.remove(local_conn)
+						self.local_conn_list.remove(local_conn)
 						del self.idx_to_conn_list[command_a]
 						del self.conn_to_idx_list[local_conn]
-					
+
 					# Pass the data along to the server
 					else:
 						self.control_socket.sendall(b'D')
@@ -240,14 +262,36 @@ class NATSrv():
 							conn = self.idx_to_conn_list[command_a]
 							if not conn is None:
 								conn.sendall(command_d)
-						
+
 						# Connection killed from client side
 						elif command_c == b'X':
 							conn = self.idx_to_conn_list[command_a]
 							self.remote_conn_list.remove(conn)
 							del self.idx_to_conn_list[command_a]
 							del self.conn_to_idx_list[conn]
-				
+
+						# Ping received, send response
+						elif command_c == b'P':
+							self.control_socket.sendall(b'R')
+							self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
+							self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
+
+						# Ping response received
+						elif command_c == b'R':
+							pass
+
+						# Something else is wrong
+						else:
+							print("Control socket failed!")
+							self.control_socket.close()
+							self.control_socket = None
+							for conn in self.remote_conn_list:
+								conn.close()
+							self.remote_conn_list = []
+							self.idx_to_conn_list = {}
+							self.conn_to_idx_list = {}
+							continue
+
 				# Data from remote connection
 				for remote_conn in a:
 					data = remote_conn.recv(1024)
@@ -260,7 +304,7 @@ class NATSrv():
 						self.remote_conn_list.remove(remote_conn)
 						del self.idx_to_conn_list[command_a]
 						del self.conn_to_idx_list[remote_conn]
-					
+
 					# Pass the data along to the client
 					else:
 						self.control_socket.sendall(b'D')
