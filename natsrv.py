@@ -49,8 +49,8 @@ class NATClient():
 			if self.control_socket in a:
 				a.remove(self.control_socket)
 				command_c = self.control_socket.recv(1)
-				command_a = int.from_bytes(self.control_socket.recv(4))
-				command_l = int.from_bytes(self.control_socket.recv(4))
+				command_a = int.from_bytes(self.control_socket.recv(4), byteorder="big")
+				command_l = int.from_bytes(self.control_socket.recv(4), byteorder="big")
 				command_d = self.control_socket.recv(command_l)
 
 				# New connection on server side
@@ -81,8 +81,8 @@ class NATClient():
 				# Local connection is dead, stop listening and notify the server of the failure
 				if len(data) == 0:
 					self.control_socket.sendall(b'X')
-					self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4))
-					self.control_socket.sendall((0).to_bytes(4))
+					self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4, byteorder="big"))
+					self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
 					self.remote_conn_list.remove(local_conn)
 					del self.idx_to_conn_list[command_a]
 					del self.conn_to_idx_list[local_conn]
@@ -90,8 +90,8 @@ class NATClient():
 				# Pass the data along to the server
 				else:
 					self.control_socket.sendall(b'D')
-					self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4))
-					self.control_socket.sendall(len(data).to_bytes(4))
+					self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4, byteorder="big"))
+					self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
 					self.control_socket.sendall(data)
 
 class NATSrv():
@@ -179,8 +179,8 @@ class NATSrv():
 					self.idx_to_conn_list[self.conn_to_idx_next] = conn
 					self.conn_to_idx_list[conn] = self.conn_to_idx_next
 					self.control_socket.sendall(b'A')
-					self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4))
-					self.control_socket.sendall(len(addr).to_bytes(4))
+					self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4, byteorder="big"))
+					self.control_socket.sendall(len(addr).to_bytes(4, byteorder="big"))
 					self.control_socket.sendall(addr)
 
 			# Command from control socket
@@ -198,8 +198,8 @@ class NATSrv():
 					self.conn_to_idx_list = {}
 					continue
 				else:
-					command_a = int.from_bytes(self.control_socket.recv(4))
-					command_l = int.from_bytes(self.control_socket.recv(4))
+					command_a = int.from_bytes(self.control_socket.recv(4), byteorder="big")
+					command_l = int.from_bytes(self.control_socket.recv(4), byteorder="big")
 					command_d = self.control_socket.recv(command_l)
 
 					# Data from client side
@@ -222,8 +222,8 @@ class NATSrv():
 				# Remote connection is dead, stop listening and notify the client of the failure
 				if len(data) == 0:
 					self.control_socket.sendall(b'X')
-					self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4))
-					self.control_socket.sendall((0).to_bytes(4))
+					self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4, byteorder="big"))
+					self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
 					self.remote_conn_list.remove(remote_conn)
 					del self.idx_to_conn_list[command_a]
 					del self.conn_to_idx_list[remote_conn]
@@ -231,8 +231,8 @@ class NATSrv():
 				# Pass the data along to the client
 				else:
 					self.control_socket.sendall(b'D')
-					self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4))
-					self.control_socket.sendall(len(data).to_bytes(4))
+					self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4, byteorder="big"))
+					self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
 					self.control_socket.sendall(data)
 
 
