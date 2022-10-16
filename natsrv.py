@@ -25,6 +25,18 @@ def _format_addr(addr):
 def _timestamp():
 	return _b(time.strftime('[%Y-%m-%d %H:%M:%S] ', time.localtime(time.time())), 'utf-8')
 
+def recvall(socket, len):
+	data = b''
+	while True:
+		data_rx = socket.recv(len)
+		if len(data_rx) == 0:
+			raise socket.timeout
+		data += data_rx
+		len -= len(data_rx)
+		if len == 0:
+			break
+	return data
+
 class NATClient():
 	def __init__(self, secret, upstream_ip, upstream_port, localserv_ip, localserv_port):
 		self.secret = secret
@@ -48,11 +60,11 @@ class NATClient():
 			# Command from control socket
 			if self.control_socket in a:
 				a.remove(self.control_socket)
-				command_c = self.control_socket.recv(1)
-				command_a = int.from_bytes(self.control_socket.recv(4), byteorder="big")
-				command_l = int.from_bytes(self.control_socket.recv(4), byteorder="big")
+				command_c = recvall(self.control_socket, 1)
+				command_a = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
+				command_l = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
 				print("Command: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
-				command_d = self.control_socket.recv(command_l)
+				command_d = recvall(self.control_socket, command_l)
 
 				# New connection on server side
 				if command_c == b'A':
@@ -188,7 +200,7 @@ class NATSrv():
 			# Command from control socket
 			if self.control_socket in a:
 				a.remove(self.control_socket)
-				command_c = self.control_socket.recv(1)
+				command_c = recvall(self.control_socket, 1)
 				if len(command_c) != 1:
 					print("Control socket failed!")
 					self.control_socket.close()
@@ -200,10 +212,10 @@ class NATSrv():
 					self.conn_to_idx_list = {}
 					continue
 				else:
-					command_a = int.from_bytes(self.control_socket.recv(4), byteorder="big")
-					command_l = int.from_bytes(self.control_socket.recv(4), byteorder="big")
+					command_a = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
+					command_l = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
 					print("Command: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
-					command_d = self.control_socket.recv(command_l)
+					command_d = recvall(self.control_socket, command_l)
 
 					# Data from client side
 					if command_c == b'D':
