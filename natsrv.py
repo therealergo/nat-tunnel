@@ -301,23 +301,24 @@ class NATSrv():
 
 				# Data from remote connection
 				for remote_conn in a:
-					data = remote_conn.recv(1024)
+					if remote_conn in self.remote_conn_list:
+						data = remote_conn.recv(1024)
 
-					# Remote connection is dead, stop listening and notify the client of the failure
-					if len(data) == 0:
-						self.control_socket.sendall(b'X')
-						self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4, byteorder="big"))
-						self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-						self.remote_conn_list.remove(remote_conn)
-						del self.idx_to_conn_list[command_a]
-						del self.conn_to_idx_list[remote_conn]
+						# Remote connection is dead, stop listening and notify the client of the failure
+						if len(data) == 0:
+							self.control_socket.sendall(b'X')
+							self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4, byteorder="big"))
+							self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
+							self.remote_conn_list.remove(remote_conn)
+							del self.idx_to_conn_list[command_a]
+							del self.conn_to_idx_list[remote_conn]
 
-					# Pass the data along to the client
-					else:
-						self.control_socket.sendall(b'D')
-						self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4, byteorder="big"))
-						self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
-						self.control_socket.sendall(data)
+						# Pass the data along to the client
+						else:
+							self.control_socket.sendall(b'D')
+							self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4, byteorder="big"))
+							self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
+							self.control_socket.sendall(data)
 
 
 if __name__ == "__main__":
