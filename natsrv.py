@@ -78,6 +78,8 @@ class NATClient():
 
 					# New connection on server side
 					if command_c == b'A':
+						if command_a in self.idx_to_conn_list.keys():
+							raise ValueError("Bad key!")
 						conn = socket.socket()
 						conn.connect((self.localserv_ip, self.localserv_port))
 						self.local_conn_list.append(conn)
@@ -87,15 +89,17 @@ class NATClient():
 
 					# Connection failed on the server side
 					elif command_c == b'X':
-						conn = self.idx_to_conn_list[command_a]
-						self.local_conn_list.remove(conn)
-						del self.idx_to_conn_list[command_a]
-						del self.conn_to_idx_list[conn]
+						if command_a in self.idx_to_conn_list.keys():
+							conn = self.idx_to_conn_list[command_a]
+							self.local_conn_list.remove(conn)
+							del self.idx_to_conn_list[command_a]
+							del self.conn_to_idx_list[conn]
 
 					# Data from server side
 					elif command_c == b'D':
-						conn = self.idx_to_conn_list[command_a]
-						conn.sendall(command_d)
+						if command_a in self.idx_to_conn_list.keys():
+							conn = self.idx_to_conn_list[command_a]
+							conn.sendall(command_d)
 
 					# Ping received, send response
 					elif command_c == b'P':
@@ -121,23 +125,24 @@ class NATClient():
 
 				# Data from local connection
 				for local_conn in a:
-					data = local_conn.recv(1024)
+					if local_conn in self.local_conn_list:
+						data = local_conn.recv(1024)
 
-					# Local connection is dead, stop listening and notify the server of the failure
-					if len(data) == 0:
-						self.control_socket.sendall(b'X')
-						self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4, byteorder="big"))
-						self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-						self.local_conn_list.remove(local_conn)
-						del self.idx_to_conn_list[command_a]
-						del self.conn_to_idx_list[local_conn]
+						# Local connection is dead, stop listening and notify the server of the failure
+						if len(data) == 0:
+							self.control_socket.sendall(b'X')
+							self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4, byteorder="big"))
+							self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
+							self.local_conn_list.remove(local_conn)
+							del self.idx_to_conn_list[command_a]
+							del self.conn_to_idx_list[local_conn]
 
-					# Pass the data along to the server
-					else:
-						self.control_socket.sendall(b'D')
-						self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4, byteorder="big"))
-						self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
-						self.control_socket.sendall(data)
+						# Pass the data along to the server
+						else:
+							self.control_socket.sendall(b'D')
+							self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4, byteorder="big"))
+							self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
+							self.control_socket.sendall(data)
 
 class NATSrv():
 	def _isnumericipv4(self, ip):
@@ -259,16 +264,18 @@ class NATSrv():
 
 						# Data from client side
 						if command_c == b'D':
-							conn = self.idx_to_conn_list[command_a]
-							if not conn is None:
-								conn.sendall(command_d)
+							if command_a in self.idx_to_conn_list.keys():
+								conn = self.idx_to_conn_list[command_a]
+								if not conn is None:
+									conn.sendall(command_d)
 
 						# Connection killed from client side
 						elif command_c == b'X':
-							conn = self.idx_to_conn_list[command_a]
-							self.remote_conn_list.remove(conn)
-							del self.idx_to_conn_list[command_a]
-							del self.conn_to_idx_list[conn]
+							if command_a in self.idx_to_conn_list.keys():
+								conn = self.idx_to_conn_list[command_a]
+								self.remote_conn_list.remove(conn)
+								del self.idx_to_conn_list[command_a]
+								del self.conn_to_idx_list[conn]
 
 						# Ping received, send response
 						elif command_c == b'P':
