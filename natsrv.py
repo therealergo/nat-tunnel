@@ -4,7 +4,8 @@ import socket, select, os, threading, hashlib, rocksock, time, sys, codecs
 NONCE_LEN = 8
 PING_PERIOD_SEC = 10
 TIMEOUT_PERIOD_SEC = 60
-MAX_CHUNK_LEN_BYTES = 512 * 1024
+MAX_CHUNK_LEN_BYTES = 16 * 1024 * 1024
+CONTROL_SOCKET_RETRY_PERIOD_SEC = 5
 
 PY3 = sys.version_info[0] == 3
 if PY3:
@@ -84,7 +85,7 @@ class NATClient():
 				if self.control_socket is None:
 					print("Opening control socket")
 					if is_control_socket_restart:
-						time.sleep(10)
+						time.sleep(CONTROL_SOCKET_RETRY_PERIOD_SEC)
 					self.control_socket = socket.socket()
 					self.control_socket.connect((self.upstream_ip, self.upstream_port))
 					self.control_socket.settimeout(TIMEOUT_PERIOD_SEC)
