@@ -174,12 +174,12 @@ class NATSrv():
 				else:
 					while self.conn_to_idx_next in self.idx_to_conn_list.keys():
 						self.conn_to_idx_next += 1
-					print("Remote connected accepted: addr = " + str(addr) + " idx = " + str(self.conn_to_idx_next))
+					print("Remote connection accepted: addr = " + str(addr) + " idx = " + str(self.conn_to_idx_next))
 					self.remote_conn_list.append(conn)
 					self.idx_to_conn_list[self.conn_to_idx_next] = conn
 					self.conn_to_idx_list[conn] = self.conn_to_idx_next
 					self.control_socket.sendall(b'A')
-					self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4, byteorder="big"))
+					self.control_socket.sendall(self.conn_to_idx_list[conn].to_bytes(4, byteorder="big"))
 					self.control_socket.sendall(len(addr).to_bytes(4, byteorder="big"))
 					self.control_socket.sendall(addr)
 
