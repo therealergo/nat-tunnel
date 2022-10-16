@@ -51,6 +51,7 @@ class NATClient():
 				command_c = self.control_socket.recv(1)
 				command_a = int.from_bytes(self.control_socket.recv(4), byteorder="big")
 				command_l = int.from_bytes(self.control_socket.recv(4), byteorder="big")
+				print("Command: " + command_c + " : " + str(command_a) + " : " + str(command_l))
 				command_d = self.control_socket.recv(command_l)
 
 				# New connection on server side
@@ -201,6 +202,7 @@ class NATSrv():
 				else:
 					command_a = int.from_bytes(self.control_socket.recv(4), byteorder="big")
 					command_l = int.from_bytes(self.control_socket.recv(4), byteorder="big")
+					print("Command: " + command_c + " : " + str(command_a) + " : " + str(command_l))
 					command_d = self.control_socket.recv(command_l)
 
 					# Data from client side
