@@ -92,6 +92,8 @@ class NATClient():
 					self.control_socket = socket.socket()
 					self.control_socket.connect((self.upstream_ip, self.upstream_port))
 					self.control_socket.settimeout(TIMEOUT_PERIOD_SEC)
+					nonce = recvall(self.control_socket, NONCE_LEN*2)
+					self.control_socket.sendall(_hash(self.secret + nonce))
 					is_control_socket_restart = True
 
 				# Wait for any data to be readable, list readable sockets in "a"
@@ -261,8 +263,15 @@ class NATSrv():
 						conn, addr = self.control_listen_sock.accept()
 						conn.settimeout(TIMEOUT_PERIOD_SEC)
 						if self.control_socket is None:
-							print("Control socket connected")
-							self.control_socket = conn
+							nonce = _get_nonce()
+							conn.sendall(nonce)
+							secure = recvall(conn, len(_hash(b'')))
+							if secure == _hash(self.secret + nonce):
+								self.control_socket = conn
+								print("Control socket connected")
+							else:
+								print("Control socket security failure!")
+								conn.close()
 						else:
 							print("Control socket already present!")
 							conn.close()
