@@ -5,6 +5,7 @@ NONCE_LEN = 8
 PING_PERIOD_SEC = 10
 TIMEOUT_PERIOD_SEC = 60
 MAX_CHUNK_LEN_BYTES = 16 * 1024 * 1024
+DO_DETAILED_COMMAND_PRINT = True
 CONTROL_SOCKET_RETRY_PERIOD_SEC = 5
 
 PY3 = sys.version_info[0] == 3
@@ -57,6 +58,8 @@ class NATClient():
 	def _send_command(self, code, conn_idx, data):
 		if len(code) != 1:
 			raise ValueError("Invalid code!")
+		if DO_DETAILED_COMMAND_PRINT:
+			print("Command TX: " + str(code) + " : " + str(conn_idx) + " : " + str(len(data)))
 		self.control_socket.sendall(code)
 		self.control_socket.sendall(conn_idx.to_bytes(4, byteorder="big"))
 		self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
@@ -106,7 +109,8 @@ class NATClient():
 						command_c = recvall(self.control_socket, 1)
 						command_a = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
 						command_l = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
-						print("Command: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
+						if DO_DETAILED_COMMAND_PRINT:
+							print("Command RX: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
 						command_d = recvall(self.control_socket, command_l)
 
 						# New connection on server side
@@ -200,6 +204,8 @@ class NATSrv():
 	def _send_command(self, code, conn_idx, data):
 		if len(code) != 1:
 			raise ValueError("Invalid code!")
+		if DO_DETAILED_COMMAND_PRINT:
+			print("Command TX: " + str(code) + " : " + str(conn_idx) + " : " + str(len(data)))
 		self.control_socket.sendall(code)
 		self.control_socket.sendall(conn_idx.to_bytes(4, byteorder="big"))
 		self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
@@ -292,7 +298,8 @@ class NATSrv():
 						else:
 							command_a = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
 							command_l = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
-							print("Command: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
+							if DO_DETAILED_COMMAND_PRINT:
+								print("Command RX: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
 							command_d = recvall(self.control_socket, command_l)
 
 							# Data from client side
