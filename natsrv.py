@@ -1,6 +1,11 @@
 from __future__ import print_function
 import socket, select, os, threading, hashlib, rocksock, time, sys, codecs
 
+NONCE_LEN = 8
+PING_PERIOD_SEC = 10
+TIMEOUT_PERIOD_SEC = 60
+MAX_CHUNK_LEN_BYTES = 512 * 1024
+
 PY3 = sys.version_info[0] == 3
 if PY3:
 	def _b(a, b):
@@ -8,8 +13,6 @@ if PY3:
 else:
 	def _b(a, b):
 		return bytes(a)
-
-NONCE_LEN = 8
 
 def _get_nonce():
 	return codecs.encode(os.urandom(NONCE_LEN), 'hex')
@@ -40,6 +43,25 @@ def recvall(socket, n_bytes):
 	return data
 
 class NATClient():
+	def _reset_control_socket(self, reason):
+		print("Control socket failed (" + reason + ")!")
+		self.control_socket.close()
+		self.control_socket = None
+		for conn in self.local_conn_list:
+			conn.close()
+		self.local_conn_list = []
+		self.idx_to_conn_list = {}
+		self.conn_to_idx_list = {}
+
+	def _send_command(self, code, conn_idx, data):
+		if len(code) != 1:
+			raise ValueError("Invalid code!")
+		self.control_socket.sendall(code)
+		self.control_socket.sendall(conn_idx.to_bytes(4, byteorder="big"))
+		self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
+		if len(data) > 0:
+			self.control_socket.sendall(data)
+
 	def __init__(self, secret, upstream_ip, upstream_port, localserv_ip, localserv_port):
 		self.secret = secret
 		self.localserv_ip = localserv_ip
@@ -52,97 +74,92 @@ class NATClient():
 		self.conn_to_idx_list = {}
 
 	def setup(self):
-		self.control_socket = socket.socket()
-		self.control_socket.connect((self.upstream_ip, self.upstream_port))
+		pass
 
 	def doit(self):
 		while True:
-			a,b,c = select.select([self.control_socket] + self.local_conn_list, [], [], 10.0)
+			try:
+				# Open control socket if it isn't already
+				if self.control_socket is None:
+					print("Opening control socket")
+					self.control_socket = socket.socket()
+					self.control_socket.connect((self.upstream_ip, self.upstream_port))
+					self.control_socket.settimeout(TIMEOUT_PERIOD_SEC)
 
-			# Nothing for a while, send ping
-			if not a:
-				if not self.control_socket is None:
-					self.control_socket.sendall(b'P')
-					self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-					self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-			else:
+				# Wait for any data to be readable, list readable sockets in "a"
+				a,b,c = select.select([self.control_socket] + self.local_conn_list, [], [], PING_PERIOD_SEC)
 
-				# Command from control socket
-				if self.control_socket in a:
-					a.remove(self.control_socket)
-					command_c = recvall(self.control_socket, 1)
-					command_a = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
-					command_l = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
-					print("Command: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
-					command_d = recvall(self.control_socket, command_l)
+				# Nothing for a while, send ping
+				if not a:
+					if not self.control_socket is None:
+						self._send_command(b'P', 0, b'')
+				else:
 
-					# New connection on server side
-					if command_c == b'A':
-						if command_a in self.idx_to_conn_list.keys():
-							raise ValueError("Bad key!")
-						conn = socket.socket()
-						conn.connect((self.localserv_ip, self.localserv_port))
-						self.local_conn_list.append(conn)
-						self.idx_to_conn_list[command_a] = conn
-						self.conn_to_idx_list[conn] = command_a
-						# We don't do anything with the remote address here?
+					# Command from control socket
+					if self.control_socket in a:
+						a.remove(self.control_socket)
+						command_c = recvall(self.control_socket, 1)
+						command_a = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
+						command_l = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
+						print("Command: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
+						command_d = recvall(self.control_socket, command_l)
 
-					# Connection failed on the server side
-					elif command_c == b'X':
-						if command_a in self.idx_to_conn_list.keys():
-							conn = self.idx_to_conn_list[command_a]
-							self.local_conn_list.remove(conn)
-							del self.idx_to_conn_list[command_a]
-							del self.conn_to_idx_list[conn]
+						# New connection on server side
+						if command_c == b'A':
+							if command_a in self.idx_to_conn_list.keys():
+								raise ValueError("Bad key!")
+							conn = socket.socket()
+							conn.connect((self.localserv_ip, self.localserv_port))
+							self.local_conn_list.append(conn)
+							self.idx_to_conn_list[command_a] = conn
+							self.conn_to_idx_list[conn] = command_a
+							# We don't do anything with the remote address here?
 
-					# Data from server side
-					elif command_c == b'D':
-						if command_a in self.idx_to_conn_list.keys():
-							conn = self.idx_to_conn_list[command_a]
-							conn.sendall(command_d)
+						# Connection failed on the server side
+						elif command_c == b'X':
+							if command_a in self.idx_to_conn_list.keys():
+								conn = self.idx_to_conn_list[command_a]
+								self.local_conn_list.remove(conn)
+								del self.idx_to_conn_list[command_a]
+								del self.conn_to_idx_list[conn]
 
-					# Ping received, send response
-					elif command_c == b'P':
-						self.control_socket.sendall(b'R')
-						self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-						self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
+						# Data from server side
+						elif command_c == b'D':
+							if command_a in self.idx_to_conn_list.keys():
+								conn = self.idx_to_conn_list[command_a]
+								conn.sendall(command_d)
 
-					# Ping response received
-					elif command_c == b'R':
-						pass
+						# Ping received, send response
+						elif command_c == b'P':
+							self._send_command(b'R', 0, b'')
 
-					# Something else is wrong
-					else:
-						print("Control socket failed!")
-						self.control_socket.close()
-						self.control_socket = None
-						for conn in self.local_conn_list:
-							conn.close()
-						self.local_conn_list = []
-						self.idx_to_conn_list = {}
-						self.conn_to_idx_list = {}
-						continue
+						# Ping response received
+						elif command_c == b'R':
+							pass
 
-				# Data from local connection
-				for local_conn in a:
-					if local_conn in self.local_conn_list:
-						data = local_conn.recv(1024)
-
-						# Local connection is dead, stop listening and notify the server of the failure
-						if len(data) == 0:
-							self.control_socket.sendall(b'X')
-							self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4, byteorder="big"))
-							self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-							self.local_conn_list.remove(local_conn)
-							del self.idx_to_conn_list[self.conn_to_idx_list[local_conn]]
-							del self.conn_to_idx_list[local_conn]
-
-						# Pass the data along to the server
+						# Something else is wrong
 						else:
-							self.control_socket.sendall(b'D')
-							self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4, byteorder="big"))
-							self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
-							self.control_socket.sendall(data)
+							self._reset_control_socket("invalid command")
+							continue
+
+					# Data from local connection
+					for local_conn in a:
+						if local_conn in self.local_conn_list:
+							data = local_conn.recv(MAX_CHUNK_LEN_BYTES)
+
+							# Local connection is dead, stop listening and notify the server of the failure
+							if len(data) == 0:
+								self._send_command(b'X', self.conn_to_idx_list[local_conn], b'')
+								self.local_conn_list.remove(local_conn)
+								del self.idx_to_conn_list[self.conn_to_idx_list[local_conn]]
+								del self.conn_to_idx_list[local_conn]
+
+							# Pass the data along to the server
+							else:
+								self._send_command(b'D', self.conn_to_idx_list[local_conn], data)
+
+			except (socket.error) as e:
+				self._reset_control_socket("socket error " + str(e))
 
 class NATSrv():
 	def _isnumericipv4(self, ip):
@@ -165,6 +182,25 @@ class NATSrv():
 			else: return af, sa
 		return None, None
 
+	def _reset_control_socket(self, reason):
+		print("Control socket failed (" + reason + ")!")
+		self.control_socket.close()
+		self.control_socket = None
+		for conn in self.remote_conn_list:
+			conn.close()
+		self.remote_conn_list = []
+		self.idx_to_conn_list = {}
+		self.conn_to_idx_list = {}
+
+	def _send_command(self, code, conn_idx, data):
+		if len(code) != 1:
+			raise ValueError("Invalid code!")
+		self.control_socket.sendall(code)
+		self.control_socket.sendall(conn_idx.to_bytes(4, byteorder="big"))
+		self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
+		if len(data) > 0:
+			self.control_socket.sendall(data)
+
 	def __init__(self, secret, upstream_listen_ip, upstream_port, client_listen_ip, client_port):
 		self.up_port = upstream_port
 		self.up_ip = upstream_listen_ip
@@ -181,6 +217,7 @@ class NATSrv():
 		self.conn_to_idx_next = 0
 
 	def setup(self):
+		print("Listening for control socket")
 		af, sa = self._resolve(self.client_ip, self.client_port)
 		self.remote_listen_sock = socket.socket(af, socket.SOCK_STREAM)
 		self.remote_listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -194,131 +231,111 @@ class NATSrv():
 
 	def doit(self):
 		while True:
-			if self.control_socket is None:
-				a,b,c = select.select([self.control_listen_sock], [], [], 10.0)
-			else:
-				a,b,c = select.select([self.remote_listen_sock, self.control_listen_sock, self.control_socket] + self.remote_conn_list, [], [], 10.0)
+			try:
+				# Wait for any data to be readable, list readable sockets in "a"
+				if self.control_socket is None:
+					a,b,c = select.select([self.control_listen_sock], [], [], PING_PERIOD_SEC)
+				else:
+					a,b,c = select.select([self.remote_listen_sock, self.control_listen_sock, self.control_socket] + self.remote_conn_list, [], [], PING_PERIOD_SEC)
 
-			# Nothing for a while, send ping
-			if not a:
-				if not self.control_socket is None:
-					self.control_socket.sendall(b'P')
-					self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-					self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-			else:
+				# Nothing for a while, send ping
+				if not a:
+					if not self.control_socket is None:
+						self._send_command(b'P', 0, b'')
+				else:
 
-				# New control socket connection
-				if self.control_listen_sock in a:
-					a.remove(self.control_listen_sock)
-					conn, addr = self.control_listen_sock.accept()
-					if self.control_socket is None:
-						print("Control socket connected")
-						self.control_socket = conn
-					else:
-						print("Control socket already present!")
-						conn.close()
-
-				# New remote connection
-				if self.remote_listen_sock in a:
-					a.remove(self.remote_listen_sock)
-					conn, addr = self.remote_listen_sock.accept()
-
-					# We have no control socket, kill the connection
-					if self.control_socket is None:
-						print("Cannot accept, no control socket!")
-						conn.close()
-
-					# Start listening to this connection and notify the client of the new connection
-					else:
-						addr_bytes = str.encode(str(addr))
-						while self.conn_to_idx_next in self.idx_to_conn_list.keys():
-							self.conn_to_idx_next += 1
-						print("Remote connection accepted: addr = " + str(addr) + " idx = " + str(self.conn_to_idx_next))
-						self.remote_conn_list.append(conn)
-						self.idx_to_conn_list[self.conn_to_idx_next] = conn
-						self.conn_to_idx_list[conn] = self.conn_to_idx_next
-						self.control_socket.sendall(b'A')
-						self.control_socket.sendall(self.conn_to_idx_list[conn].to_bytes(4, byteorder="big"))
-						self.control_socket.sendall(len(addr_bytes).to_bytes(4, byteorder="big"))
-						self.control_socket.sendall(addr_bytes)
-
-				# Command from control socket
-				if self.control_socket in a:
-					a.remove(self.control_socket)
-					command_c = recvall(self.control_socket, 1)
-					if len(command_c) != 1:
-						print("Control socket failed!")
-						self.control_socket.close()
-						self.control_socket = None
-						for conn in self.remote_conn_list:
+					# New control socket connection
+					if self.control_listen_sock in a:
+						a.remove(self.control_listen_sock)
+						conn, addr = self.control_listen_sock.accept()
+						conn.settimeout(TIMEOUT_PERIOD_SEC)
+						if self.control_socket is None:
+							print("Control socket connected")
+							self.control_socket = conn
+						else:
+							print("Control socket already present!")
 							conn.close()
-						self.remote_conn_list = []
-						self.idx_to_conn_list = {}
-						self.conn_to_idx_list = {}
-						continue
-					else:
-						command_a = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
-						command_l = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
-						print("Command: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
-						command_d = recvall(self.control_socket, command_l)
 
-						# Data from client side
-						if command_c == b'D':
-							if command_a in self.idx_to_conn_list.keys():
-								conn = self.idx_to_conn_list[command_a]
-								if not conn is None:
-									conn.sendall(command_d)
+					# New remote connection
+					if self.remote_listen_sock in a:
+						a.remove(self.remote_listen_sock)
+						conn, addr = self.remote_listen_sock.accept()
 
-						# Connection killed from client side
-						elif command_c == b'X':
-							if command_a in self.idx_to_conn_list.keys():
-								conn = self.idx_to_conn_list[command_a]
-								self.remote_conn_list.remove(conn)
-								del self.idx_to_conn_list[command_a]
-								del self.conn_to_idx_list[conn]
+						# We have no control socket, kill the connection
+						if self.control_socket is None:
+							print("Cannot accept, no control socket!")
+							conn.close()
 
-						# Ping received, send response
-						elif command_c == b'P':
-							self.control_socket.sendall(b'R')
-							self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-							self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-
-						# Ping response received
-						elif command_c == b'R':
-							pass
-
-						# Something else is wrong
+						# Start listening to this connection and notify the client of the new connection
 						else:
-							print("Control socket failed!")
-							self.control_socket.close()
-							self.control_socket = None
-							for conn in self.remote_conn_list:
-								conn.close()
-							self.remote_conn_list = []
-							self.idx_to_conn_list = {}
-							self.conn_to_idx_list = {}
+							addr_bytes = str.encode(str(addr))
+							while self.conn_to_idx_next in self.idx_to_conn_list.keys():
+								self.conn_to_idx_next += 1
+							print("Remote connection accepted: addr = " + str(addr) + " idx = " + str(self.conn_to_idx_next))
+							self.remote_conn_list.append(conn)
+							self.idx_to_conn_list[self.conn_to_idx_next] = conn
+							self.conn_to_idx_list[conn] = self.conn_to_idx_next
+							self._send_command(b'A', self.conn_to_idx_list[conn], addr_bytes)
+
+					# Command from control socket
+					if self.control_socket in a:
+						a.remove(self.control_socket)
+						command_c = recvall(self.control_socket, 1)
+						if len(command_c) != 1:
+							self._reset_control_socket("socket read failure")
 							continue
-
-				# Data from remote connection
-				for remote_conn in a:
-					if remote_conn in self.remote_conn_list:
-						data = remote_conn.recv(1024)
-
-						# Remote connection is dead, stop listening and notify the client of the failure
-						if len(data) == 0:
-							self.control_socket.sendall(b'X')
-							self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4, byteorder="big"))
-							self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
-							self.remote_conn_list.remove(remote_conn)
-							del self.idx_to_conn_list[self.conn_to_idx_list[remote_conn]]
-							del self.conn_to_idx_list[remote_conn]
-
-						# Pass the data along to the client
 						else:
-							self.control_socket.sendall(b'D')
-							self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4, byteorder="big"))
-							self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
-							self.control_socket.sendall(data)
+							command_a = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
+							command_l = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
+							print("Command: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
+							command_d = recvall(self.control_socket, command_l)
+
+							# Data from client side
+							if command_c == b'D':
+								if command_a in self.idx_to_conn_list.keys():
+									conn = self.idx_to_conn_list[command_a]
+									if not conn is None:
+										conn.sendall(command_d)
+
+							# Connection killed from client side
+							elif command_c == b'X':
+								if command_a in self.idx_to_conn_list.keys():
+									conn = self.idx_to_conn_list[command_a]
+									self.remote_conn_list.remove(conn)
+									del self.idx_to_conn_list[command_a]
+									del self.conn_to_idx_list[conn]
+
+							# Ping received, send response
+							elif command_c == b'P':
+								self._send_command(b'R', 0, b'')
+
+							# Ping response received
+							elif command_c == b'R':
+								pass
+
+							# Something else is wrong
+							else:
+								self._reset_control_socket("invalid command")
+								continue
+
+					# Data from remote connection
+					for remote_conn in a:
+						if remote_conn in self.remote_conn_list:
+							data = remote_conn.recv(MAX_CHUNK_LEN_BYTES)
+
+							# Remote connection is dead, stop listening and notify the client of the failure
+							if len(data) == 0:
+								self._send_command(b'X', self.conn_to_idx_list[remote_conn], b'')
+								self.remote_conn_list.remove(remote_conn)
+								del self.idx_to_conn_list[self.conn_to_idx_list[remote_conn]]
+								del self.conn_to_idx_list[remote_conn]
+
+							# Pass the data along to the client
+							else:
+								self._send_command(b'D', self.conn_to_idx_list[remote_conn], data)
+			
+			except (socket.error) as e:
+				self._reset_control_socket("socket error " + str(e))
 
 
 if __name__ == "__main__":
