@@ -74,8 +74,8 @@ class NATClient():
 		self.next_csock = None
 		self.threads = []
 
-	def _setup_sock(self, cmd):
-		sock = rocksock.Rocksock(host=self.upstream_ip, port=self.upstream_port)
+	def _setup_sock(self, cmd, timeout=0):
+		sock = rocksock.Rocksock(host=self.upstream_ip, port=self.upstream_port, timeout=timeout)
 		sock.connect()
 		nonce = sock.recv(NONCE_LEN*2 + 1).rstrip(b'\n')
 		sock.send(_hash(cmd + self.secret + nonce) + b'\n')
@@ -83,7 +83,7 @@ class NATClient():
 
 	def setup(self):
 		self.controlsock = self._setup_sock(b'adm')
-		self.next_csock =  self._setup_sock(b'skt')
+		self.next_csock =  self._setup_sock(b'skt', timeout=10)
 
 	def doit(self):
 		while True:
@@ -95,7 +95,14 @@ class NATClient():
 				else:
 					i += 1
 
-			l = self.controlsock.recvline()
+			try:
+				l = self.controlsock.recvline()
+			except RocksockException as e:
+				if e.get_error() == RS_E_HIT_TIMEOUT:
+					self.next_csock.send(b'P')
+					self.next_csock.recv(1)
+				else:
+					raise e
 			print(_timestamp() + l.rstrip(b'\n'))
 			if l.startswith(b'CONN:'):
 				addr=l.rstrip(b'\n').split(b':')[1]
@@ -104,7 +111,7 @@ class NATClient():
 				thread = Tunnel(local_conn.sock, self.next_csock.sock, addr)
 				thread.start()
 				self.threads.append(thread)
-				self.next_csock = self._setup_sock(b'skt')
+				self.next_csock = self._setup_sock(b'skt', timeout=10)
 
 
 class NATSrv():
@@ -197,13 +204,16 @@ class NATSrv():
 			if not self.next_upstream_socket:
 				self.wait_conn_up()
 			if self.control_socket and self.next_upstream_socket:
-				a,b,c = select.select([self.sc, self.control_socket, ], [], [])
+				a,b,c = select.select([self.sc, self.control_socket, self.next_upstream_socket], [], [], 30.0)
 				if self.control_socket in a:
 					print("lost control socket")
 					self.control_socket.close()
 					self.control_socket = None
 					continue
 				if self.next_upstream_socket in a:
+					self.next_upstream_socket.recv(1)
+					self.next_upstream_socket.send(b'P')
+				if (not self.next_upstream_socket in a) and (not self.sc in a):
 					print("lost spare upstream socket")
 					self.next_upstream_socket.close()
 					self.next_upstream_socket = None
