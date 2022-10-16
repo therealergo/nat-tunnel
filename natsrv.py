@@ -77,14 +77,18 @@ class NATClient():
 		pass
 
 	def doit(self):
+		is_control_socket_restart = False
 		while True:
 			try:
 				# Open control socket if it isn't already
 				if self.control_socket is None:
 					print("Opening control socket")
+					if is_control_socket_restart:
+						time.sleep(10)
 					self.control_socket = socket.socket()
 					self.control_socket.connect((self.upstream_ip, self.upstream_port))
 					self.control_socket.settimeout(TIMEOUT_PERIOD_SEC)
+					is_control_socket_restart = True
 
 				# Wait for any data to be readable, list readable sockets in "a"
 				a,b,c = select.select([self.control_socket] + self.local_conn_list, [], [], PING_PERIOD_SEC)
