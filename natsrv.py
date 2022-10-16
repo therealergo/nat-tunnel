@@ -159,7 +159,7 @@ class NATClient():
 								self._send_command(b'D', self.conn_to_idx_list[local_conn], data)
 
 			except (socket.error) as e:
-				self._reset_control_socket("socket error " + str(e))
+				self._reset_control_socket("socket error \"" + repr(e) + "\"")
 
 class NATSrv():
 	def _isnumericipv4(self, ip):
@@ -335,7 +335,7 @@ class NATSrv():
 								self._send_command(b'D', self.conn_to_idx_list[remote_conn], data)
 			
 			except (socket.error) as e:
-				self._reset_control_socket("socket error " + str(e))
+				self._reset_control_socket("socket error \"" + repr(e) + "\"")
 
 
 if __name__ == "__main__":
