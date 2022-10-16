@@ -134,7 +134,7 @@ class NATClient():
 							self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4, byteorder="big"))
 							self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
 							self.local_conn_list.remove(local_conn)
-							del self.idx_to_conn_list[command_a]
+							del self.idx_to_conn_list[self.conn_to_idx_list[local_conn]]
 							del self.conn_to_idx_list[local_conn]
 
 						# Pass the data along to the server
@@ -310,7 +310,7 @@ class NATSrv():
 							self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4, byteorder="big"))
 							self.control_socket.sendall((0).to_bytes(4, byteorder="big"))
 							self.remote_conn_list.remove(remote_conn)
-							del self.idx_to_conn_list[command_a]
+							del self.idx_to_conn_list[self.conn_to_idx_list[remote_conn]]
 							del self.conn_to_idx_list[remote_conn]
 
 						# Pass the data along to the client
