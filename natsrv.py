@@ -3,6 +3,7 @@ import socket, select, os, hashlib, time, sys, codecs
 
 NONCE_LEN = 8
 PING_PERIOD_SEC = 10
+MAX_FAILED_PINGS = 4
 TIMEOUT_PERIOD_SEC = 60
 MAX_CHUNK_LEN_BYTES = 16 * 1024 * 1024
 DO_DETAILED_COMMAND_PRINT = True
@@ -73,6 +74,7 @@ class NATClient():
 		pass
 
 	def doit(self):
+		num_unrequited_pings_sent = 0
 		is_control_socket_restart = False
 		while True:
 			try:
@@ -90,6 +92,11 @@ class NATClient():
 
 				# Wait for any data to be readable, list readable sockets in "a"
 				a,b,c = select.select([self.control_socket] + self.local_conn_list, [], [], PING_PERIOD_SEC)
+
+				# Reset connection if too many pings fail
+				if (not self.control_socket is None) and (num_unrequited_pings_sent > MAX_FAILED_PINGS):
+					self._reset_control_socket("too many unrequited pings")
+					continue
 
 				# Nothing for a while, send ping
 				if not a:
@@ -134,10 +141,12 @@ class NATClient():
 
 						# Ping received, send response
 						elif command_c == b'P':
+							num_unrequited_pings_sent += 1
 							self._send_command(b'R', 0, b'')
 
 						# Ping response received
 						elif command_c == b'R':
+							num_unrequited_pings_sent = 0
 							pass
 
 						# Something else is wrong
@@ -235,6 +244,7 @@ class NATSrv():
 		self.control_listen_sock.listen(1)
 
 	def doit(self):
+		num_unrequited_pings_sent = 0
 		while True:
 			try:
 				# Wait for any data to be readable, list readable sockets in "a"
@@ -242,6 +252,11 @@ class NATSrv():
 					a,b,c = select.select([self.control_listen_sock], [], [], PING_PERIOD_SEC)
 				else:
 					a,b,c = select.select([self.remote_listen_sock, self.control_listen_sock, self.control_socket] + self.remote_conn_list, [], [], PING_PERIOD_SEC)
+
+				# Reset connection if too many pings fail
+				if (not self.control_socket is None) and (num_unrequited_pings_sent > MAX_FAILED_PINGS):
+					self._reset_control_socket("too many unrequited pings")
+					continue
 
 				# Nothing for a while, send ping
 				if not a:
@@ -320,10 +335,12 @@ class NATSrv():
 
 							# Ping received, send response
 							elif command_c == b'P':
+								num_unrequited_pings_sent += 1
 								self._send_command(b'R', 0, b'')
 
 							# Ping response received
 							elif command_c == b'R':
+								num_unrequited_pings_sent = 0
 								pass
 
 							# Something else is wrong
