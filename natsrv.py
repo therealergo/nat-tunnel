@@ -172,6 +172,7 @@ class NATSrv():
 
 				# Start listening to this connection and notify the client of the new connection
 				else:
+					addr_bytes = str.encode(str(addr))
 					while self.conn_to_idx_next in self.idx_to_conn_list.keys():
 						self.conn_to_idx_next += 1
 					print("Remote connection accepted: addr = " + str(addr) + " idx = " + str(self.conn_to_idx_next))
@@ -180,8 +181,8 @@ class NATSrv():
 					self.conn_to_idx_list[conn] = self.conn_to_idx_next
 					self.control_socket.sendall(b'A')
 					self.control_socket.sendall(self.conn_to_idx_list[conn].to_bytes(4, byteorder="big"))
-					self.control_socket.sendall(len(addr).to_bytes(4, byteorder="big"))
-					self.control_socket.sendall(addr)
+					self.control_socket.sendall(len(addr_bytes).to_bytes(4, byteorder="big"))
+					self.control_socket.sendall(addr_bytes)
 
 			# Command from control socket
 			if self.control_socket in a:
