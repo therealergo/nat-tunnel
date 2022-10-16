@@ -59,7 +59,7 @@ class NATClient():
 		if len(code) != 1:
 			raise ValueError("Invalid code!")
 		if DO_DETAILED_COMMAND_PRINT:
-			print("Command TX: " + str(code) + " : " + str(conn_idx) + " : " + str(len(data)))
+			print("Command TX: " + str(code) + " idx = " + str(conn_idx) + " len = " + str(len(data)))
 		self.control_socket.sendall(code)
 		self.control_socket.sendall(conn_idx.to_bytes(4, byteorder="big"))
 		self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
@@ -110,7 +110,7 @@ class NATClient():
 						command_a = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
 						command_l = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
 						if DO_DETAILED_COMMAND_PRINT:
-							print("Command RX: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
+							print("Command RX: " + str(command_c) + " idx = " + str(command_a) + " len = " + str(command_l))
 						command_d = recvall(self.control_socket, command_l)
 
 						# New connection on server side
@@ -205,7 +205,7 @@ class NATSrv():
 		if len(code) != 1:
 			raise ValueError("Invalid code!")
 		if DO_DETAILED_COMMAND_PRINT:
-			print("Command TX: " + str(code) + " : " + str(conn_idx) + " : " + str(len(data)))
+			print("Command TX: " + str(code) + " idx = " + str(conn_idx) + " len = " + str(len(data)))
 		self.control_socket.sendall(code)
 		self.control_socket.sendall(conn_idx.to_bytes(4, byteorder="big"))
 		self.control_socket.sendall(len(data).to_bytes(4, byteorder="big"))
@@ -299,7 +299,7 @@ class NATSrv():
 							command_a = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
 							command_l = int.from_bytes(recvall(self.control_socket, 4), byteorder="big")
 							if DO_DETAILED_COMMAND_PRINT:
-								print("Command RX: " + str(command_c) + " : " + str(command_a) + " : " + str(command_l))
+								print("Command RX: " + str(command_c) + " idx = " + str(command_a) + " len = " + str(command_l))
 							command_d = recvall(self.control_socket, command_l)
 
 							# Data from client side
