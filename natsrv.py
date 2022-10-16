@@ -1,5 +1,5 @@
 from __future__ import print_function
-import socket, select, os, threading, hashlib, rocksock, time, sys, codecs
+import socket, select, os, hashlib, time, sys, codecs
 
 NONCE_LEN = 8
 PING_PERIOD_SEC = 10
@@ -21,14 +21,6 @@ def _get_nonce():
 
 def _hash(str):
 	return _b(hashlib.sha256(str).hexdigest(), 'utf-8')
-
-def _format_addr(addr):
-	ip, port = addr
-	ip = _b(ip, 'utf-8')
-	return b"%s:%d"%(ip, port)
-
-def _timestamp():
-	return _b(time.strftime('[%Y-%m-%d %H:%M:%S] ', time.localtime(time.time())), 'utf-8')
 
 def recvall(conn, n_bytes):
 	if n_bytes == 0:
