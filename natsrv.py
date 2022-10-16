@@ -25,44 +25,6 @@ def _format_addr(addr):
 def _timestamp():
 	return _b(time.strftime('[%Y-%m-%d %H:%M:%S] ', time.localtime(time.time())), 'utf-8')
 
-class Tunnel():
-	def __init__(self, fds, fdc, caddr):
-		self.fds = fds
-		self.fdc = fdc
-		self.done = threading.Event()
-		self.t = None
-	def _cleanup(self):
-		if self.fdc: self.fdc.close()
-		if self.fds: self.fds.close()
-		self.fdc = None
-		self.fds = None
-	def _threadfunc(self):
-		while True:
-			a,b,c = select.select([self.fds, self.fdc], [], [])
-			try:
-				buf = a[0].recv(1024)
-			except:
-				buf = ''
-			if len(buf) == 0:
-				break
-			try:
-				if a[0] == self.fds:
-					self.fdc.send(buf)
-				else:
-					self.fds.send(buf)
-			except:
-				break
-		self._cleanup()
-		self.done.set()
-	def start(self):
-		self.t = threading.Thread(target=self._threadfunc)
-		self.t.daemon = True
-		self.t.start()
-	def finished(self):
-		return self.done.is_set()
-	def reap(self):
-		self.t.join()
-
 class NATClient():
 	def __init__(self, secret, upstream_ip, upstream_port, localserv_ip, localserv_port):
 		self.secret = secret
@@ -70,49 +32,67 @@ class NATClient():
 		self.localserv_port = localserv_port
 		self.upstream_ip = upstream_ip
 		self.upstream_port = upstream_port
-		self.controlsock = None
-		self.next_csock = None
-		self.threads = []
-
-	def _setup_sock(self, cmd, timeout=0):
-		sock = rocksock.Rocksock(host=self.upstream_ip, port=self.upstream_port, timeout=timeout)
-		sock.connect()
-		nonce = sock.recv(NONCE_LEN*2 + 1).rstrip(b'\n')
-		sock.send(_hash(cmd + self.secret + nonce) + b'\n')
-		return sock
+		self.control_socket = None
+		self.local_conn_list = []
+		self.idx_to_conn_list = {}
+		self.conn_to_idx_list = {}
 
 	def setup(self):
-		self.controlsock = self._setup_sock(b'adm')
-		self.next_csock =  self._setup_sock(b'skt', timeout=10)
+		self.control_socket = socket.socket()
+		self.control_socket.connect((self.upstream_ip, self.upstream_port))
 
 	def doit(self):
 		while True:
-			i = 0
-			while i < len(self.threads):
-				if self.threads[i].finished():
-					self.threads[i].reap()
-					self.threads.pop(i)
-				else:
-					i += 1
+			a,b,c = select.select([self.control_socket] + self.local_conn_list, [], [], 10.0)
 
-			try:
-				l = self.controlsock.recvline()
-			except RocksockException as e:
-				if e.get_error() == RS_E_HIT_TIMEOUT:
-					self.next_csock.send(b'P')
-					self.next_csock.recv(1)
-				else:
-					raise e
-			print(_timestamp() + l.rstrip(b'\n'))
-			if l.startswith(b'CONN:'):
-				addr=l.rstrip(b'\n').split(b':')[1]
-				local_conn = rocksock.Rocksock(host=self.localserv_ip, port=self.localserv_port)
-				local_conn.connect()
-				thread = Tunnel(local_conn.sock, self.next_csock.sock, addr)
-				thread.start()
-				self.threads.append(thread)
-				self.next_csock = self._setup_sock(b'skt', timeout=10)
+			# Command from control socket
+			if self.control_socket in a:
+				a.remove(self.control_socket)
+				command_c = self.control_socket.recv(1)
+				command_a = int.from_bytes(self.control_socket.recv(4))
+				command_l = int.from_bytes(self.control_socket.recv(4))
+				command_d = self.control_socket.recv(command_l)
 
+				# New connection on server side
+				if command_c == b'A':
+					conn = socket.socket()
+					conn.connect((self.localserv_ip, self.localserv_port))
+					self.local_conn_list.append(conn)
+					self.idx_to_conn_list[command_a] = conn
+					self.conn_to_idx_list[conn] = command_a
+					# We don't do anything with the remote address here?
+
+				# Connection failed on the server side
+				elif command_c == b'X':
+					conn = self.idx_to_conn_list[command_a]
+					self.local_conn_list.remove(conn)
+					del self.idx_to_conn_list[command_a]
+					del self.conn_to_idx_list[conn]
+
+				# Data from server side
+				elif command_c == b'D':
+					conn = self.idx_to_conn_list[command_a]
+					conn.sendall(command_d)
+			
+			# Data from local connection
+			for local_conn in a:
+				data = local_conn.recv(1024)
+
+				# Local connection is dead, stop listening and notify the server of the failure
+				if len(data) == 0:
+					self.control_socket.sendall(b'X')
+					self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4))
+					self.control_socket.sendall((0).to_bytes(4))
+					self.remote_conn_list.remove(local_conn)
+					del self.idx_to_conn_list[command_a]
+					del self.conn_to_idx_list[local_conn]
+				
+				# Pass the data along to the server
+				else:
+					self.control_socket.sendall(b'D')
+					self.control_socket.sendall(self.conn_to_idx_list[local_conn].to_bytes(4))
+					self.control_socket.sendall(len(data).to_bytes(4))
+					self.control_socket.sendall(data)
 
 class NATSrv():
 	def _isnumericipv4(self, ip):
@@ -133,7 +113,6 @@ class NATSrv():
 			if want_v4 and af != socket.AF_INET: continue
 			if af != socket.AF_INET and af != socket.AF_INET6: continue
 			else: return af, sa
-
 		return None, None
 
 	def __init__(self, secret, upstream_listen_ip, upstream_port, client_listen_ip, client_port):
@@ -142,84 +121,119 @@ class NATSrv():
 		self.client_port = client_port
 		self.client_ip = client_listen_ip
 		self.secret = secret
-		self.threads = []
-		self.su = None
-		self.sc = None
+		self.remote_listen_sock = None
+		self.control_listen_sock = None
 		self.control_socket = None
-		self.next_upstream_socket = None
 		self.hashlen = len(_hash(b''))
-
-	def _setup_listen_socket(self, listenip, port):
-		af, sa = self._resolve(listenip, port)
-		s = socket.socket(af, socket.SOCK_STREAM)
-		s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-		s.bind((sa[0], sa[1]))
-		s.listen(1)
-		return s
+		self.remote_conn_list = []
+		self.idx_to_conn_list = {}
+		self.conn_to_idx_list = {}
+		self.conn_to_idx_next = 0
 
 	def setup(self):
-		self.su = self._setup_listen_socket(self.up_ip, self.up_port)
-		self.sc = self._setup_listen_socket(self.client_ip, self.client_port)
-
-	def wait_conn_up(self):
-		conn, addr = self.su.accept()
-		nonce = _get_nonce()
-		print(_timestamp() + b"CONN: %s (nonce: %s) ... "%(_format_addr(addr), nonce), end='')
-		conn.send(nonce + b'\n')
-		cmd = conn.recv(1 + self.hashlen).rstrip(b'\n')
-		if cmd == _hash(b'adm' + self.secret + nonce):
-			if self.control_socket:
-				self.control_socket.close()
-			self.control_socket = conn
-			print("OK (admin)")
-		elif cmd == _hash(b'skt' + self.secret + nonce):
-			print("OK (tunnel)")
-			if not self.control_socket:
-				conn.close()
-			else:
-				self.next_upstream_socket = conn
-		else:
-			print("rejected!")
-			conn.close()
-
-	def wait_conn_client(self):
-		conn, addr = self.sc.accept()
-		self.control_socket.send(b"CONN:%s\n"%_format_addr(addr))
-		thread = Tunnel(self.next_upstream_socket, conn, addr)
-		thread.start()
-		self.threads.append(thread)
-		self.next_upstream_socket = None
+		af, sa = self._resolve(self.client_ip, self.client_port)
+		self.remote_listen_sock = socket.socket(af, socket.SOCK_STREAM)
+		self.remote_listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		self.remote_listen_sock.bind((sa[0], sa[1]))
+		self.remote_listen_sock.listen(1)
+		af, sa = self._resolve(self.up_ip, self.up_port)
+		self.control_listen_sock = socket.socket(af, socket.SOCK_STREAM)
+		self.control_listen_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		self.control_listen_sock.bind((sa[0], sa[1]))
+		self.control_listen_sock.listen(1)
 
 	def doit(self):
 		while True:
-			i = 0
-			while i < len(self.threads):
-				if self.threads[i].finished():
-					self.threads[i].reap()
-					self.threads.pop(i)
+			if self.control_socket is None:
+				a,b,c = select.select([self.control_listen_sock], [], [], 10.0)
+			else:
+				a,b,c = select.select([self.remote_listen_sock, self.control_listen_sock, self.control_socket] + self.remote_conn_list, [], [], 10.0)
+
+			# New control socket connection
+			if self.control_listen_sock in a:
+				a.remove(self.control_listen_sock)
+				conn, addr = self.control_listen_sock.accept()
+				if self.control_socket is None:
+					print("Control socket connected")
+					self.control_socket = conn
 				else:
-					i += 1
-			if not self.control_socket:
-				self.wait_conn_up()
-			if not self.next_upstream_socket:
-				self.wait_conn_up()
-			if self.control_socket and self.next_upstream_socket:
-				a,b,c = select.select([self.sc, self.control_socket, self.next_upstream_socket], [], [], 30.0)
-				if self.control_socket in a:
-					print("lost control socket")
+					print("Control socket already present!")
+					conn.close()
+
+			# New remote connection
+			if self.remote_listen_sock in a:
+				a.remove(self.remote_listen_sock)
+				conn, addr = self.remote_listen_sock.accept()
+
+				# We have no control socket, kill the connection
+				if self.control_socket is None:
+					print("Cannot accept, no control socket!")
+					conn.close()
+
+				# Start listening to this connection and notify the client of the new connection
+				else:
+					while self.conn_to_idx_next in self.idx_to_conn_list.keys():
+						self.conn_to_idx_next += 1
+					print("Remote connected accepted: addr = " + str(addr) + " idx = " + str(self.conn_to_idx_next))
+					self.remote_conn_list.append(conn)
+					self.idx_to_conn_list[self.conn_to_idx_next] = conn
+					self.conn_to_idx_list[conn] = self.conn_to_idx_next
+					self.control_socket.sendall(b'A')
+					self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4))
+					self.control_socket.sendall(len(addr).to_bytes(4))
+					self.control_socket.sendall(addr)
+
+			# Command from control socket
+			if self.control_socket in a:
+				a.remove(self.control_socket)
+				command_c = self.control_socket.recv(1)
+				if len(command_c) != 1:
+					print("Control socket failed!")
 					self.control_socket.close()
 					self.control_socket = None
+					for conn in self.remote_conn_list:
+						conn.close()
+					self.remote_conn_list = []
+					self.idx_to_conn_list = {}
+					self.conn_to_idx_list = {}
 					continue
-				if self.next_upstream_socket in a:
-					self.next_upstream_socket.recv(1)
-					self.next_upstream_socket.send(b'P')
-				if (not self.next_upstream_socket in a) and (not self.sc in a):
-					print("lost spare upstream socket")
-					self.next_upstream_socket.close()
-					self.next_upstream_socket = None
-					continue
-				if self.sc in a:
-					self.wait_conn_client()
+				else:
+					command_a = int.from_bytes(self.control_socket.recv(4))
+					command_l = int.from_bytes(self.control_socket.recv(4))
+					command_d = self.control_socket.recv(command_l)
+
+					# Data from client side
+					if command_c == b'D':
+						conn = self.idx_to_conn_list[command_a]
+						if not conn is None:
+							conn.sendall(command_d)
+					
+					# Connection killed from client side
+					elif command_c == b'X':
+						conn = self.idx_to_conn_list[command_a]
+						self.remote_conn_list.remove(conn)
+						del self.idx_to_conn_list[command_a]
+						del self.conn_to_idx_list[conn]
+			
+			# Data from remote connection
+			for remote_conn in a:
+				data = remote_conn.recv(1024)
+
+				# Remote connection is dead, stop listening and notify the client of the failure
+				if len(data) == 0:
+					self.control_socket.sendall(b'X')
+					self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4))
+					self.control_socket.sendall((0).to_bytes(4))
+					self.remote_conn_list.remove(remote_conn)
+					del self.idx_to_conn_list[command_a]
+					del self.conn_to_idx_list[remote_conn]
+				
+				# Pass the data along to the client
+				else:
+					self.control_socket.sendall(b'D')
+					self.control_socket.sendall(self.conn_to_idx_list[remote_conn].to_bytes(4))
+					self.control_socket.sendall(len(data).to_bytes(4))
+					self.control_socket.sendall(data)
 
 
 if __name__ == "__main__":
