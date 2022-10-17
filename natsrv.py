@@ -84,8 +84,8 @@ class NATClient():
 					if is_control_socket_restart:
 						time.sleep(CONTROL_SOCKET_RETRY_PERIOD_SEC)
 					self.control_socket = socket.socket()
-					self.control_socket.connect((self.upstream_ip, self.upstream_port))
 					self.control_socket.settimeout(TIMEOUT_PERIOD_SEC)
+					self.control_socket.connect((self.upstream_ip, self.upstream_port))
 					nonce = recvall(self.control_socket, NONCE_LEN*2)
 					self.control_socket.sendall(_hash(self.secret + nonce))
 					is_control_socket_restart = True
