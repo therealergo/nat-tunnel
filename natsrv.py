@@ -196,8 +196,9 @@ class NATSrv():
 
 	def _reset_control_socket(self, reason):
 		print("Control socket failed (" + reason + ")!")
-		self.control_socket.close()
-		self.control_socket = None
+		if not self.control_socket is None:
+			self.control_socket.close()
+			self.control_socket = None
 		for conn in self.remote_conn_list:
 			conn.close()
 		self.remote_conn_list = []
