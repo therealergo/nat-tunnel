@@ -40,8 +40,9 @@ def recvall(conn, n_bytes):
 class NATClient():
 	def _reset_control_socket(self, reason):
 		print("Control socket failed (" + reason + ")!")
-		self.control_socket.close()
-		self.control_socket = None
+		if not self.control_socket is None:
+			self.control_socket.close()
+			self.control_socket = None
 		for conn in self.local_conn_list:
 			conn.close()
 		self.local_conn_list = []
@@ -95,7 +96,7 @@ class NATClient():
 				a,b,c = select.select([self.control_socket] + self.local_conn_list, [], [], PING_PERIOD_SEC)
 
 				# Reset connection if too many pings fail
-				if (not self.control_socket is None) and (self.num_unrequited_pings_sent > MAX_FAILED_PINGS):
+				if self.num_unrequited_pings_sent > MAX_FAILED_PINGS:
 					self._reset_control_socket("too many unrequited pings")
 					continue
 
@@ -142,7 +143,7 @@ class NATClient():
 
 						# Ping received, send response
 						elif command_c == b'P':
-							self.num_unrequited_pings_sent += 1
+							self.num_unrequited_pings_sent = self.num_unrequited_pings_sent + 1
 							self._send_command(b'R', 0, b'')
 
 						# Ping response received
@@ -257,7 +258,7 @@ class NATSrv():
 					a,b,c = select.select([self.remote_listen_sock, self.control_listen_sock, self.control_socket] + self.remote_conn_list, [], [], PING_PERIOD_SEC)
 
 				# Reset connection if too many pings fail
-				if (not self.control_socket is None) and (self.num_unrequited_pings_sent > MAX_FAILED_PINGS):
+				if self.num_unrequited_pings_sent > MAX_FAILED_PINGS:
 					self._reset_control_socket("too many unrequited pings")
 					continue
 
@@ -338,7 +339,7 @@ class NATSrv():
 
 							# Ping received, send response
 							elif command_c == b'P':
-								self.num_unrequited_pings_sent += 1
+								self.num_unrequited_pings_sent = self.num_unrequited_pings_sent + 1
 								self._send_command(b'R', 0, b'')
 
 							# Ping response received
